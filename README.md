@@ -1,2 +1,1 @@
-# misc-web
-Miscellaneous small web projects
+# Miscellaneous Web Stuff
