@@ -9,7 +9,7 @@ import sys
 import time
 
 
-VERSION = "1.0.0-dev"
+VERSION = "0.1.0"
 OUTPUT_QUALITY = 10
 
 
@@ -18,6 +18,7 @@ _input_files = None
 _output_file = None
 _overwrite = False
 _framerate = None
+_speedup = None
 _status = None
 _preview = None
 
@@ -39,14 +40,16 @@ def parse_arguments():
     """
     Parse arguments.
     """
-    global _quiet, _input_files, _output_file, _overwrite, _framerate, _status, _preview
+    global _quiet, _input_files, _output_file, _overwrite, _framerate, _speedup, _status, _preview
 
-    parser = argparse.ArgumentParser(description="Concatenate a bunch of video files. Optionally modify some properties.")
+    parser = argparse.ArgumentParser(description="Concatenate a bunch of video files. Maybe other stuff.")
     parser.add_argument("-q", "--quiet", action="store_true", dest="quiet", help="Hide informational output.")
     parser.add_argument(metavar="input", nargs="+", dest="inputs", help="One or more video files to use as input.")
     parser.add_argument("-o", "--output", metavar="output", required=True, dest="output", help="Video output file.")
     parser.add_argument("-w", "--overwrite", action="store_true", dest="overwrite", help="Overwrite output file if it exists.")
-    parser.add_argument("-f", "--framerate", metavar="FPS", type=float, dest="framerate", help="New frame rate. If omitted, the frame rate of the first input is used.")
+    parser.add_argument("-f", "--framerate", metavar="FPS", type=float, dest="framerate",
+            help="New frame rate. Defaults to the frame rate of the first input file. If different from the original, the content will be sped up or slowed down.")
+    parser.add_argument("-x", "--speedup", metavar="N", type=int, dest="speedup", help="Speedup. Every N frame is used, others are dropped.")
     parser.add_argument("-s", "--status", metavar="N", type=int, dest="status", help="If positive, show status output every N seconds.")
     parser.add_argument("-p", "--preview", metavar="N", type=int, dest="preview", help="If positive, preview every N frames.")
 
@@ -61,12 +64,15 @@ def parse_arguments():
     _output_file = args.output
     _overwrite = args.overwrite
     _framerate = args.framerate
+    _speedup = args.speedup
     _status = args.status
     _preview = args.preview
 
     assert _input_files is not None
     assert len(_input_files) > 0
     assert _output_file is not None
+    if _speedup:
+        assert _speedup > 0
     if _framerate:
         assert _framerate > 0
     if _preview:
@@ -80,7 +86,7 @@ def check_files():
     Make sure the provided input files exist and that the dir of the output file is writable.
     """
     # Check input files
-    iprint("Input files:")
+    iprint("Input files (in order):")
     for input_file_path in _input_files:
         input_file = Path(input_file_path)
         iprint("-", input_file)
@@ -137,7 +143,8 @@ def process():
         preview_fig = pyplot.figure()
         pyplot.axis("off")
 
-    total_image_count = 0
+    input_frame_count = 0
+    output_frame_count = 0
     start_time = time.perf_counter()
     last_status_time = start_time
 
@@ -147,18 +154,24 @@ def process():
         iprint("Reading:", input_file)
         reader = imageio.get_reader(input_file, mode="I")
         for frame in reader:
-            writer.append_data(frame)
+            input_frame_count += 1
+            # Speedup
+            if _speedup and input_frame_count % _speedup != 0:
+                continue
             # Status
             current_time = time.perf_counter()
             if _status and (current_time - last_status_time) > _status:
-                iprint("Status: duration={:.0f}s images_processed={} video_duration_processed={:.0f}s".format((current_time - start_time), total_image_count, (total_image_count / framerate)))
+                iprint("Status: processing_duration={:.0f}s input_frames={} output_frames={} output_duration={:.0f}s".format(
+                        (current_time - start_time), input_frame_count, output_frame_count, (output_frame_count / framerate)))
                 last_status_time = current_time
             # Preview
-            if _preview and total_image_count % _preview == 0:
+            if _preview and output_frame_count % _preview == 0:
                 pyplot.imshow(frame)
-                preview_fig.suptitle('Frame #{}\nTime {:.1f}s'.format(total_image_count, (total_image_count / framerate)))
+                preview_fig.suptitle("Frame #{}\nTime {:.1f}s".format(output_frame_count, (output_frame_count / framerate)))
                 pyplot.pause(0.001)
-            total_image_count += 1
+            # Write
+            writer.append_data(frame)
+            output_frame_count += 1
         reader.close()
     iprint()
 
@@ -168,9 +181,11 @@ def process():
     total_time = (end_time - start_time)
 
     iprint("Done.")
-    iprint("Total duration: {:.1f}s".format(total_time))
-    iprint("Total image count:", total_image_count)
-    iprint("Frame processing rate: {:.1f} FPS".format(total_image_count / total_time))
+    iprint("Processing duration: {:.1f}s".format(total_time))
+    iprint("Input frame count:", input_frame_count)
+    iprint("Input processing rate: {:.1f} FPS".format(input_frame_count / total_time))
+    iprint("Output frame count:", output_frame_count)
+    iprint("Output processing rate: {:.1f} FPS".format(output_frame_count / total_time))
 
 
 def iprint(*args, **kwargs):
